@@ -6,6 +6,11 @@ let package = Package(
     platforms: [
        .macOS(.v12)
     ],
+    products: [
+        .library(name: "ClientRateLimiter", targets: [
+            "ClientRateLimiter"
+        ])
+    ],
     dependencies: [
         // 💧 A server-side Swift web framework.
         .package(url: "https://github.com/vapor/vapor.git", from: "4.0.0"),
@@ -31,6 +36,9 @@ let package = Package(
         .testTarget(name: "AppTests", dependencies: [
             .target(name: "App"),
             .product(name: "XCTVapor", package: "vapor"),
+        ]),
+        .target(name: "ClientRateLimiter", dependencies: [
+            .product(name: "Vapor", package: "vapor")
         ])
     ]
 )
