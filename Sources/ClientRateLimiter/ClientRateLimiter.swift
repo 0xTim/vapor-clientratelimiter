@@ -1,61 +1,103 @@
 import Vapor
+import Fluent
+import FluentSQL
 
 public struct ClientRateLimiter {
     
     let byteBufferAllocator: ByteBufferAllocator
     let logger: Logger
     let client: Client
+    let db: Database
+    let config: RateLimiterConfig
     
     func `for`(req: Request) -> ClientRateLimiter {
         return self
     }
     
     func send(_ request: ClientRequest) async throws -> ClientResponse {
-        fatalError()
+        
+        guard let host = request.url.host else {
+            throw Abort(.badRequest, reason: "No host supplied")
+        }
+        
+        let responseStorage = ClientResponseStorage()
+        
+        try await db.transaction { transactionDB in
+            guard let transaction = transactionDB as? SQLDatabase else {
+                throw Abort(.internalServerError)
+            }
+            // Try and get a lock on the table
+            try await transaction.raw("LOCK TABLE ONLY '\(raw: RateLimitedRequest.schema)' IN ACCESS EXCLUSIVE MODE;").run()
+            
+            // See if any requests queued
+            let pendingRequestsCount = try await RateLimitedRequest.query(on: transactionDB).filter(\.$host == host).sort(\.$requestedAt).count()
+            
+            if pendingRequestsCount == 0 {
+                try await waitForNextRequestInterval(host: host, transactionDB: transactionDB)
+            } else {
+                let requestTime = Date()
+                let timeoutTime = requestTime.addingTimeInterval(config.timeout)
+                let pendingRequest = RateLimitedRequest(id: UUID(), host: host, requestedAt: requestTime)
+                try await pendingRequest.create(on: transactionDB)
+                
+                // Wait til our request reaches the top
+                while try await RateLimitedRequest.query(on: transactionDB).filter(\.$host == host).sort(\.$requestedAt).first()?.id != pendingRequest.id {
+                    if Date() > timeoutTime {
+                        try await pendingRequest.delete(on: transactionDB)
+                        throw RateLimiterError.timeout
+                    }
+                    try await Task.sleep(nanoseconds: UInt64(config.requestInterval * 1_000_000))
+                }
+                
+                #warning("Do we need to wait for host request time?")
+                
+                // Ours is next to process
+                let actualRequestTime = Date()
+                let clientResponse = try await client.send(request)
+                await responseStorage.updateResponse(clientResponse)
+                
+                try await transaction.raw("LOCK TABLE ONLY '\(raw: HostRequestTime.schema)' IN ACCESS EXCLUSIVE MODE;").run()
+                if let existingHostRequestTime = try await HostRequestTime.query(on: transactionDB).filter(\.$host == host).first() {
+                    existingHostRequestTime.lastRequestedAt = actualRequestTime
+                    try await existingHostRequestTime.update(on: transactionDB)
+                } else {
+                    let newTime = HostRequestTime(host: host, lastRequestedAt: actualRequestTime)
+                    try await newTime.create(on: transactionDB)
+                }
+            }
+        }
+        
+        guard let response = await responseStorage.clientResponse else {
+            throw RateLimiterError.noResponse
+        }
+        return response
+    }
+    
+    func waitForNextRequestInterval(host: String, transactionDB: Database) async throws {
+        if let existingHostRequestTime = try await HostRequestTime.query(on: transactionDB).filter(\.$host == host).first() {
+            let nextRequestTime = existingHostRequestTime.lastRequestedAt.addingTimeInterval(config.requestInterval)
+            if nextRequestTime <= Date() {
+                // We're past the time, return
+                return
+            } else {
+                let timeUntilNextRequest = nextRequestTime.distance(to: Date())
+                try await Task.sleep(nanoseconds: UInt64(timeUntilNextRequest * 1_000_000))
+            }
+        } else {
+            // No requests yet to this host, return
+        }
     }
 }
 
-extension ClientRateLimiter {
-    public func get(_ url: URI, headers: HTTPHeaders = [:], beforeSend: (inout ClientRequest) throws -> () = { _ in }) async throws -> ClientResponse {
-        try await self.send(.GET, headers: headers, to: url, beforeSend: beforeSend)
-    }
+enum RateLimiterError: Error {
+    case timeout
+    case noResponse
+}
 
-    public func post(_ url: URI, headers: HTTPHeaders = [:], beforeSend: (inout ClientRequest) throws -> () = { _ in }) async throws -> ClientResponse {
-        try await self.send(.POST, headers: headers, to: url, beforeSend: beforeSend)
-    }
-
-    public func patch(_ url: URI, headers: HTTPHeaders = [:], beforeSend: (inout ClientRequest) throws -> () = { _ in }) async throws -> ClientResponse {
-        try await self.send(.PATCH, headers: headers, to: url, beforeSend: beforeSend)
-    }
-
-    public func put(_ url: URI, headers: HTTPHeaders = [:], beforeSend: (inout ClientRequest) throws -> () = { _ in }) async throws -> ClientResponse {
-        try await self.send(.PUT, headers: headers, to: url, beforeSend: beforeSend)
-    }
-
-    public func delete(_ url: URI, headers: HTTPHeaders = [:], beforeSend: (inout ClientRequest) throws -> () = { _ in }) async throws -> ClientResponse {
-        try await self.send(.DELETE, headers: headers, to: url, beforeSend: beforeSend)
-    }
+actor ClientResponseStorage {
+    var clientResponse: ClientResponse? = nil
     
-    public func post<T>(_ url: URI, headers: HTTPHeaders = [:], content: T) async throws -> ClientResponse where T: Content {
-        try await self.post(url, headers: headers, beforeSend: { try $0.content.encode(content) })
-    }
-
-    public func patch<T>(_ url: URI, headers: HTTPHeaders = [:], content: T) async throws -> ClientResponse where T: Content {
-        try await self.patch(url, headers: headers, beforeSend: { try $0.content.encode(content) })
-    }
-
-    public func put<T>(_ url: URI, headers: HTTPHeaders = [:], content: T) async throws -> ClientResponse where T: Content {
-        try await self.put(url, headers: headers, beforeSend: { try $0.content.encode(content) })
-    }
-
-    public func send(
-        _ method: HTTPMethod,
-        headers: HTTPHeaders = [:],
-        to url: URI,
-        beforeSend: (inout ClientRequest) throws -> () = { _ in }
-    ) async throws -> ClientResponse {
-        var request = ClientRequest(method: method, url: url, headers: headers, body: nil, byteBufferAllocator: self.byteBufferAllocator)
-        try beforeSend(&request)
-        return try await self.send(request)
+    func updateResponse(_ newResponse: ClientResponse) {
+        self.clientResponse = newResponse
     }
 }

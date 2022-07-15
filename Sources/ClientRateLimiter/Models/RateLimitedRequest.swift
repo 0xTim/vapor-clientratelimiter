@@ -12,15 +12,11 @@ final class RateLimitedRequest: Model {
     @Field(key: "requestedAt")
     var requestedAt: Date
     
-    @Field(key: "requestDetails")
-    var requestDetails: String
-    
     init() {}
     
-    init(id: UUID? = nil, host: String, requestedAt: Date, requestDetails: String) {
+    init(id: UUID? = nil, host: String, requestedAt: Date) {
         self.id = id
         self.host = host
         self.requestedAt = requestedAt
-        self.requestDetails = requestDetails
     }
 }
