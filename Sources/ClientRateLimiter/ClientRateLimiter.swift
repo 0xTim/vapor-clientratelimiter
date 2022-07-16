@@ -27,14 +27,59 @@ public struct ClientRateLimiter {
             throw Abort(.badRequest, reason: "No host supplied")
         }
         
-        let responseStorage = ClientResponseStorage()
+        let requestTime = Date()
+        let timeoutTime = requestTime.addingTimeInterval(config.timeout)
         
+        let responseStorage = ClientResponseStorage()
+        var requestSuccessfullySent = false
+        
+        while !requestSuccessfullySent {
+            if Date() > timeoutTime {
+                throw RateLimiterError.timeout
+            }
+            do {
+                try await createTransactionAndWaitForRequestSending(request: request, responseStorage: responseStorage, requestTime: requestTime, timeoutTime: timeoutTime, host: host)
+                
+                // If we hit this point then we should now have a response
+                requestSuccessfullySent = true
+            } catch {
+                // Caught an error because we're exhausted on connections/transactions. Wait for next interval and try agin
+                try await Task.sleep(nanoseconds: UInt64(config.requestInterval * 1_000_000))
+            }
+        }
+        
+        guard let response = await responseStorage.clientResponse else {
+            throw RateLimiterError.noResponse
+        }
+        return response
+    }
+    
+    func createTransactionAndWaitForRequestSending(request: ClientRequest, responseStorage: ClientResponseStorage, requestTime: Date, timeoutTime: Date, host: String) async throws {
         try await db.transaction { transactionDB in
             guard let transaction = transactionDB as? SQLDatabase else {
                 throw Abort(.internalServerError)
             }
-            // Try and get a lock on the table
-            try await transaction.raw("LOCK TABLE ONLY \"\(raw: RateLimitedRequest.schema)\" IN ACCESS EXCLUSIVE MODE;").run()
+            
+            // Wait until we get a lock on the table
+            var gotTableLock = false
+            
+            while !gotTableLock {
+                if Date() > timeoutTime {
+                    throw RateLimiterError.timeout
+                }
+                
+                do {
+                    try await transaction.raw("LOCK TABLE ONLY \"\(raw: RateLimitedRequest.schema)\" IN ACCESS EXCLUSIVE MODE;").run()
+                    
+                    // If we reach this point, we got the lock
+                    gotTableLock = true
+                } catch {
+                    // Failed to get locks, sleep until next round
+                    try await Task.sleep(nanoseconds: UInt64(config.requestInterval * 1_000_000))
+                }
+            }
+            
+            // Get other table lock - since we have the above lock, that's the entry point so we should be able to request this safely
             try await transaction.raw("LOCK TABLE ONLY \"\(raw: HostRequestTime.schema)\" IN ACCESS EXCLUSIVE MODE;").run()
             
             // See if any requests queued
@@ -43,8 +88,6 @@ public struct ClientRateLimiter {
             if pendingRequestsCount == 0 {
                 try await waitForNextRequestInterval(host: host, transactionDB: transactionDB)
             } else {
-                let requestTime = Date()
-                let timeoutTime = requestTime.addingTimeInterval(config.timeout)
                 let pendingRequest = RateLimitedRequest(id: UUID(), host: host, requestedAt: requestTime)
                 try await pendingRequest.create(on: transactionDB)
                 
@@ -58,7 +101,7 @@ public struct ClientRateLimiter {
                 }
                 try await waitForNextRequestInterval(host: host, transactionDB: transactionDB)
             }
-                
+            
             // Ours is next to process
             let actualRequestTime = Date()
             let clientResponse = try await client.send(request)
@@ -72,11 +115,6 @@ public struct ClientRateLimiter {
                 try await newTime.create(on: transactionDB)
             }
         }
-        
-        guard let response = await responseStorage.clientResponse else {
-            throw RateLimiterError.noResponse
-        }
-        return response
     }
     
     func waitForNextRequestInterval(host: String, transactionDB: Database) async throws {
