@@ -1,4 +1,5 @@
 import Fluent
+import Foundation
 
 final class HostRequestTime: Model {
     static let schema = "host_request_time"

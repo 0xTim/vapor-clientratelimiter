@@ -13,6 +13,13 @@ app.clientRateLimiters.use {
 }
 ```
 
+Add the migrations for storing the data:
+
+```swift
+app.migrations.add(CreateHostRequestTime())
+app.migrations.add(CreateRateLimitedRequest())
+```
+
 You can configure the maximum number of requests per second to send and a timeout for requests if you're under heavy load. Then, route requests through the `clientRateLimiter`: 
 
 ```swift

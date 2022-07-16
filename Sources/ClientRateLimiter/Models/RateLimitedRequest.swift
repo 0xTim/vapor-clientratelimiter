@@ -1,4 +1,5 @@
 import Fluent
+import Foundation
 
 final class RateLimitedRequest: Model {
     static let schema = "rate_limited_request"
