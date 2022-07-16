@@ -84,11 +84,11 @@ public struct ClientRateLimiter {
     func waitForNextRequestInterval(host: String, transactionDB: Database) async throws {
         if let existingHostRequestTime = try await HostRequestTime.query(on: transactionDB).filter(\.$host == host).first() {
             let nextRequestTime = existingHostRequestTime.lastRequestedAt.addingTimeInterval(config.requestInterval)
-            if nextRequestTime <= Date() {
+            if Date() >= nextRequestTime {
                 // We're past the time, return
                 return
             } else {
-                let timeUntilNextRequest = nextRequestTime.distance(to: Date())
+                let timeUntilNextRequest = Date().distance(to: nextRequestTime)
                 try await Task.sleep(nanoseconds: UInt64(timeUntilNextRequest * 1_000_000))
             }
         } else {

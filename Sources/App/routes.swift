@@ -9,7 +9,7 @@ func routes(_ app: Application) throws {
 
     app.get("hello") { req async throws -> String in
         let response = try await req.clientRateLimiter.get("https://www.google.com")
-        req.logger.info("Time: \(Date()): \(response)")
+        req.logger.info("Time: \(Date()): \(response.status)")
         return "Hello, world!"
     }
 
