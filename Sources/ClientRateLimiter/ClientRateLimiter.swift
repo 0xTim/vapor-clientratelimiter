@@ -8,6 +8,7 @@ public struct ClientRateLimiter {
     let client: Client
     let db: Database
     let config: RateLimiterConfig
+    let dateFormatter = DateFormatter()
     
     public init(byteBufferAllocator: ByteBufferAllocator, logger: Logger, client: Client, db: Database, config: RateLimiterConfig) {
         self.byteBufferAllocator = byteBufferAllocator
@@ -15,6 +16,7 @@ public struct ClientRateLimiter {
         self.client = client
         self.db = db
         self.config = config
+        dateFormatter.dateFormat = "y-MM-dd H:mm:ss.SSSS"
     }
     
     func `for`(req: Request) -> ClientRateLimiter {
@@ -104,6 +106,7 @@ public struct ClientRateLimiter {
             
             // Ours is next to process
             let actualRequestTime = Date()
+            self.logger.info("Sending request to API at \(dateFormatter.string(from: actualRequestTime))")
             let clientResponse = try await client.send(request)
             await responseStorage.updateResponse(clientResponse)
             
@@ -120,10 +123,7 @@ public struct ClientRateLimiter {
     func waitForNextRequestInterval(host: String, transactionDB: Database) async throws {
         if let existingHostRequestTime = try await HostRequestTime.query(on: transactionDB).filter(\.$host == host).first() {
             let nextRequestTime = existingHostRequestTime.lastRequestedAt.addingTimeInterval(config.requestInterval)
-            if Date() >= nextRequestTime {
-                // We're past the time, return
-                return
-            } else {
+            while Date() < nextRequestTime {
                 let timeUntilNextRequest = Date().distance(to: nextRequestTime)
                 try await Task.sleep(nanoseconds: UInt64(timeUntilNextRequest * 1_000_000))
             }
