@@ -35,6 +35,7 @@ public struct ClientRateLimiter {
             }
             // Try and get a lock on the table
             try await transaction.raw("LOCK TABLE ONLY \"\(raw: RateLimitedRequest.schema)\" IN ACCESS EXCLUSIVE MODE;").run()
+            try await transaction.raw("LOCK TABLE ONLY \"\(raw: HostRequestTime.schema)\" IN ACCESS EXCLUSIVE MODE;").run()
             
             // See if any requests queued
             let pendingRequestsCount = try await RateLimitedRequest.query(on: transactionDB).filter(\.$host == host).sort(\.$requestedAt).count()
@@ -55,9 +56,7 @@ public struct ClientRateLimiter {
                     }
                     try await Task.sleep(nanoseconds: UInt64(config.requestInterval * 1_000_000))
                 }
-                
-#warning("Do we need to wait for host request time?")
-                
+                try await waitForNextRequestInterval(host: host, transactionDB: transactionDB)
             }
                 
             // Ours is next to process
@@ -65,7 +64,6 @@ public struct ClientRateLimiter {
             let clientResponse = try await client.send(request)
             await responseStorage.updateResponse(clientResponse)
             
-            try await transaction.raw("LOCK TABLE ONLY \"\(raw: HostRequestTime.schema)\" IN ACCESS EXCLUSIVE MODE;").run()
             if let existingHostRequestTime = try await HostRequestTime.query(on: transactionDB).filter(\.$host == host).first() {
                 existingHostRequestTime.lastRequestedAt = actualRequestTime
                 try await existingHostRequestTime.update(on: transactionDB)
