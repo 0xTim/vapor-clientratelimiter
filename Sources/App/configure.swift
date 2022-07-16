@@ -7,6 +7,8 @@ import ClientRateLimiter
 public func configure(_ app: Application) throws {
     // uncomment to serve files from /Public folder
     // app.middleware.use(FileMiddleware(publicDirectory: app.directory.publicDirectory))
+    
+    app.logger.logLevel = .debug
 
     app.databases.use(.postgres(
         hostname: Environment.get("DATABASE_HOST") ?? "localhost",
@@ -18,6 +20,11 @@ public func configure(_ app: Application) throws {
 
     app.migrations.add(CreateHostRequestTime())
     app.migrations.add(CreateRateLimitedRequest())
+    
+    let clientRateLimiterConfig = RateLimiterConfig(maxRequestsPerSecond: 5, timeout: 30)
+    app.clientRateLimiters.use {
+        ClientRateLimiter(byteBufferAllocator: $0.allocator, logger: $0.logger, client: $0.client, db: $0.db, config: clientRateLimiterConfig)
+    }
 
     // register routes
     try routes(app)

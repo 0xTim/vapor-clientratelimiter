@@ -3,15 +3,22 @@ import Fluent
 import FluentSQL
 
 public struct ClientRateLimiter {
-    
     let byteBufferAllocator: ByteBufferAllocator
     let logger: Logger
     let client: Client
     let db: Database
     let config: RateLimiterConfig
     
+    public init(byteBufferAllocator: ByteBufferAllocator, logger: Logger, client: Client, db: Database, config: RateLimiterConfig) {
+        self.byteBufferAllocator = byteBufferAllocator
+        self.logger = logger
+        self.client = client
+        self.db = db
+        self.config = config
+    }
+    
     func `for`(req: Request) -> ClientRateLimiter {
-        return self
+        return ClientRateLimiter(byteBufferAllocator: req.byteBufferAllocator, logger: req.logger, client: req.client, db: req.db, config: self.config)
     }
     
     func send(_ request: ClientRequest) async throws -> ClientResponse {
@@ -27,7 +34,7 @@ public struct ClientRateLimiter {
                 throw Abort(.internalServerError)
             }
             // Try and get a lock on the table
-            try await transaction.raw("LOCK TABLE ONLY '\(raw: RateLimitedRequest.schema)' IN ACCESS EXCLUSIVE MODE;").run()
+            try await transaction.raw("LOCK TABLE ONLY \"\(raw: RateLimitedRequest.schema)\" IN ACCESS EXCLUSIVE MODE;").run()
             
             // See if any requests queued
             let pendingRequestsCount = try await RateLimitedRequest.query(on: transactionDB).filter(\.$host == host).sort(\.$requestedAt).count()
@@ -49,21 +56,22 @@ public struct ClientRateLimiter {
                     try await Task.sleep(nanoseconds: UInt64(config.requestInterval * 1_000_000))
                 }
                 
-                #warning("Do we need to wait for host request time?")
+#warning("Do we need to wait for host request time?")
                 
-                // Ours is next to process
-                let actualRequestTime = Date()
-                let clientResponse = try await client.send(request)
-                await responseStorage.updateResponse(clientResponse)
+            }
                 
-                try await transaction.raw("LOCK TABLE ONLY '\(raw: HostRequestTime.schema)' IN ACCESS EXCLUSIVE MODE;").run()
-                if let existingHostRequestTime = try await HostRequestTime.query(on: transactionDB).filter(\.$host == host).first() {
-                    existingHostRequestTime.lastRequestedAt = actualRequestTime
-                    try await existingHostRequestTime.update(on: transactionDB)
-                } else {
-                    let newTime = HostRequestTime(host: host, lastRequestedAt: actualRequestTime)
-                    try await newTime.create(on: transactionDB)
-                }
+            // Ours is next to process
+            let actualRequestTime = Date()
+            let clientResponse = try await client.send(request)
+            await responseStorage.updateResponse(clientResponse)
+            
+            try await transaction.raw("LOCK TABLE ONLY \"\(raw: HostRequestTime.schema)\" IN ACCESS EXCLUSIVE MODE;").run()
+            if let existingHostRequestTime = try await HostRequestTime.query(on: transactionDB).filter(\.$host == host).first() {
+                existingHostRequestTime.lastRequestedAt = actualRequestTime
+                try await existingHostRequestTime.update(on: transactionDB)
+            } else {
+                let newTime = HostRequestTime(host: host, lastRequestedAt: actualRequestTime)
+                try await newTime.create(on: transactionDB)
             }
         }
         

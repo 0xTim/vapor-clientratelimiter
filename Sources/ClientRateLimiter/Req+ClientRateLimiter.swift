@@ -3,7 +3,6 @@ import Vapor
 extension Request {
     public var clientRateLimiter: ClientRateLimiter {
         self.application.clientRateLimiter.for(req: self)
-        /*.delegating(to: self.eventLoop).logging(to: self.logger).allocating(to: self.byteBufferAllocator)*/
     }
 }
 
@@ -53,7 +52,8 @@ extension Application {
         
         var storage: Storage {
             guard let storage = self.application.storage[Key.self] else {
-                fatalError("Clients not initialized. Initialize with app.clients.initialize()")
+                self.initialize()
+                return self.application.storage[Key.self]!
             }
             return storage
         }
