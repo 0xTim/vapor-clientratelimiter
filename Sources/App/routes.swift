@@ -12,8 +12,10 @@ func routes(_ app: Application) throws {
     }
 
     app.get("hello") { req async throws -> String in
-        let response = try await req.clientRateLimiter.get("https://www.google.com")
-        req.logger.info("Time: \(dateFormatter.string(from: Date())): \(response.status)")
+        let requestTime = Date()
+        _ = try await req.clientRateLimiter.get("https://www.google.com")
+        let clientRequestTime = Date()
+        req.logger.info("Request processed. Request received at \(dateFormatter.string(from: requestTime)), sent to 3rd party API at \(dateFormatter.string(from: clientRequestTime))")
         return "Hello, world!"
     }
 
