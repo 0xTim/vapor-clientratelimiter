@@ -106,7 +106,7 @@ public struct ClientRateLimiter {
             
             // Ours is next to process
             let actualRequestTime = Date()
-            self.logger.info("Sending request to API at \(dateFormatter.string(from: actualRequestTime))")
+            self.logger.debug("Sending request to API at \(dateFormatter.string(from: actualRequestTime))")
             let clientResponse = try await client.send(request)
             await responseStorage.updateResponse(clientResponse)
             
