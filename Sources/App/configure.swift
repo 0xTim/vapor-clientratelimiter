@@ -21,7 +21,7 @@ public func configure(_ app: Application) throws {
     app.migrations.add(CreateHostRequestTime())
     app.migrations.add(CreateRateLimitedRequest())
     
-    let clientRateLimiterConfig = RateLimiterConfig(maxRequestsPerSecond: 5, timeout: 30)
+    let clientRateLimiterConfig = RateLimiterConfig(maxRequestsPerSecond: 5, timeout: 60)
     app.clientRateLimiters.use {
         ClientRateLimiter(byteBufferAllocator: $0.allocator, logger: $0.logger, client: $0.client, db: $0.db, config: clientRateLimiterConfig)
     }
