@@ -46,7 +46,8 @@ public struct ClientRateLimiter {
                 requestSuccessfullySent = true
             } catch {
                 // Caught an error because we're exhausted on connections/transactions. Wait for next interval and try agin
-                try await Task.sleep(nanoseconds: UInt64(config.requestInterval * 1_000_000))
+                let requestInterval = config.requestInterval(for: host)
+                try await Task.sleep(nanoseconds: UInt64(requestInterval * 1_000_000))
             }
         }
         
@@ -65,6 +66,8 @@ public struct ClientRateLimiter {
             // Wait until we get a lock on the table
             var gotTableLock = false
             
+            let requestInterval = config.requestInterval(for: host)
+            
             while !gotTableLock {
                 if Date() > timeoutTime {
                     throw RateLimiterError.timeout
@@ -77,7 +80,7 @@ public struct ClientRateLimiter {
                     gotTableLock = true
                 } catch {
                     // Failed to get locks, sleep until next round
-                    try await Task.sleep(nanoseconds: UInt64(config.requestInterval * 1_000_000))
+                    try await Task.sleep(nanoseconds: UInt64(requestInterval * 1_000_000))
                 }
             }
             
@@ -99,7 +102,7 @@ public struct ClientRateLimiter {
                         try await pendingRequest.delete(on: transactionDB)
                         throw RateLimiterError.timeout
                     }
-                    try await Task.sleep(nanoseconds: UInt64(config.requestInterval * 1_000_000))
+                    try await Task.sleep(nanoseconds: UInt64(requestInterval * 1_000_000))
                 }
                 try await waitForNextRequestInterval(host: host, transactionDB: transactionDB)
             }
@@ -122,7 +125,8 @@ public struct ClientRateLimiter {
     
     func waitForNextRequestInterval(host: String, transactionDB: Database) async throws {
         if let existingHostRequestTime = try await HostRequestTime.query(on: transactionDB).filter(\.$host == host).first() {
-            let nextRequestTime = existingHostRequestTime.lastRequestedAt.addingTimeInterval(config.requestInterval)
+            let requestInterval = config.requestInterval(for: host)
+            let nextRequestTime = existingHostRequestTime.lastRequestedAt.addingTimeInterval(requestInterval)
             while Date() < nextRequestTime {
                 let timeUntilNextRequest = Date().distance(to: nextRequestTime)
                 try await Task.sleep(nanoseconds: UInt64(timeUntilNextRequest * 1_000_000))
