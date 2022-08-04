@@ -47,7 +47,7 @@ public struct ClientRateLimiter {
             } catch {
                 // Caught an error because we're exhausted on connections/transactions. Wait for next interval and try agin
                 let requestInterval = config.requestInterval(for: host)
-                try await Task.sleep(nanoseconds: UInt64(max(requestInterval, 0) * 1_000_000))
+                try await Task.sleep(nanoseconds: UInt64(requestInterval * 1_000_000))
             }
         }
         
@@ -80,7 +80,7 @@ public struct ClientRateLimiter {
                     gotTableLock = true
                 } catch {
                     // Failed to get locks, sleep until next round
-                    try await Task.sleep(nanoseconds: UInt64(max(requestInterval, 0) * 1_000_000))
+                    try await Task.sleep(nanoseconds: UInt64(requestInterval * 1_000_000))
                 }
             }
             
@@ -102,7 +102,7 @@ public struct ClientRateLimiter {
                         try await pendingRequest.delete(on: transactionDB)
                         throw RateLimiterError.timeout
                     }
-                    try await Task.sleep(nanoseconds: UInt64(max(requestInterval, 0) * 1_000_000))
+                    try await Task.sleep(nanoseconds: UInt64(requestInterval * 1_000_000))
                 }
                 try await waitForNextRequestInterval(host: host, transactionDB: transactionDB)
             }

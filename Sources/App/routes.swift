@@ -14,9 +14,7 @@ func routes(_ app: Application) throws {
     app.get("hello") { req async throws -> String in
         let requestTime = Date()
         do {
-            for x in 1...10 {
-                _ = try await req.clientRateLimiter.get("https://www.google.com")
-            }
+            _ = try await req.clientRateLimiter.get("https://www.google.com")
         } catch {
             req.logger.info("Rate limiter error: \(error)")
             throw Abort(.internalServerError)
