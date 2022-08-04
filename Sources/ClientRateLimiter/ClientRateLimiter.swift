@@ -129,7 +129,7 @@ public struct ClientRateLimiter {
             let nextRequestTime = existingHostRequestTime.lastRequestedAt.addingTimeInterval(requestInterval)
             while Date() < nextRequestTime {
                 let timeUntilNextRequest = Date().distance(to: nextRequestTime)
-                try await Task.sleep(nanoseconds: UInt64(timeUntilNextRequest * 1_000_000))
+                try await Task.sleep(nanoseconds: UInt64(max(timeUntilNextRequest, 0) * 1_000_000))
             }
         } else {
             // No requests yet to this host, return
